@@ -1,0 +1,18 @@
+{
+  "name": "mycc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimal Claude-Code-inspired coding agent.",
+  "bin": {
+    "mycc": "./runtime/cli.mjs"
+  },
+  "scripts": {
+    "start": "node ./runtime/cli.mjs",
+    "test": "node multiagent/smoke-test.mjs",
+    "smoke:mab": "node multiagent/smoke-test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,25 @@
+# 仅上传 runtime、multiagent 及启动所需的根目录元文件
+/*
+!/.gitignore
+!/README.md
+!/package.json
+!/.env.example
+!/runtime/
+!/runtime/**
+!/multiagent/
+!/multiagent/**
+
+# 本地运行产物与敏感配置
+/multiagent/out/
+/.env
+/.env.*
+!/.env.example
+/logs/
+/.reasonix/
+/.mycc/
+node_modules/
+.DS_Store
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
