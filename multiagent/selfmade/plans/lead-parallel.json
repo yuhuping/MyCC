@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "id": "lead-parallel-v1",
+  "description": "Lead agent decomposes & scaffolds; workerA/workerB implement independent modules in PARALLEL isolated worktrees (they also talk to each other via the team channel); integrator merges; verifier gates acceptance.",
+  "maxParallelAgents": 3,
+  "failFast": true,
+  "nodes": [
+    {
+      "id": "lead-design",
+      "agentId": "lead",
+      "kind": "lead",
+      "dependsOn": [],
+      "workspaceMode": "main",
+      "outputs": ["lead.json"]
+    },
+    {
+      "id": "worker-A",
+      "agentId": "workerA",
+      "kind": "patch",
+      "dependsOn": ["lead-design"],
+      "workspaceMode": "isolated",
+      "outputs": ["patch.json", "patch.diff"]
+    },
+    {
+      "id": "worker-B",
+      "agentId": "workerB",
+      "kind": "patch",
+      "dependsOn": ["lead-design"],
+      "workspaceMode": "isolated",
+      "outputs": ["patch.json", "patch.diff"]
+    },
+    {
+      "id": "integrate",
+      "agentId": "integrator",
+      "kind": "integrate",
+      "dependsOn": ["worker-A", "worker-B"],
+      "workspaceMode": "main",
+      "outputs": ["integration.json"]
+    },
+    {
+      "id": "verify",
+      "agentId": "verifier",
+      "kind": "verify",
+      "dependsOn": ["integrate"],
+      "workspaceMode": "read_only",
+      "outputs": ["verification.json"]
+    }
+  ]
+}

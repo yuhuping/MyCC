@@ -8,6 +8,7 @@ import { buildSystemPrompt } from './prompt.mjs'
 import { shouldCompact, compactMessages, splitMessagesForCompact, estimateTokens, createBudgetTracker, checkTokenBudget, mergeConsecutiveUserMessages, microCompact, getMaxOutputTokensForModel, getContextWindowForModel } from './compact.mjs'
 import { resumeMessages, createSessionRecorder } from './session.mjs'
 import { executeHooks, isBlocked, collectAdditionalContext } from './hooks.mjs'
+import { canUseTool } from './permissions.mjs'
 import './env.mjs'
 
 // 默认模型对齐当前源码快照的参考模型(src/constants/prompts.ts CLAUDE_4_5_OR_4_6_MODEL_IDS.sonnet)
@@ -153,7 +154,7 @@ const FORCE_EDIT_INTERVAL = 8
 const EDIT_TOOL_NAMES = new Set(['Edit', 'Write'])
 const FORCE_EDIT_NUDGE = 'You have spent several turns investigating without making any edit to the code. Stop exploring and act now: state your hypothesis about the root cause, then make the smallest possible edit that addresses it. You may investigate further only after you have an edit in place.'
 
-export async function runAgent({ prompt, workspace, messages: previousMessages = [], maxTurns = null, maxTokens = null, model = DEFAULT_MODEL, provider, signal, onEvent = () => {}, permissions = [], permissionMode = 'default', contextWindow = null, budgetTokens = null, sessionDir = null, resumeSessionId = null, sessionId = null, hooks = {}, agentDepth = 0, onPermissionRequest = null, microCompactKeepRecent = Number(process.env.MYCC_MICRO_COMPACT_KEEP ?? 0), commandRunner = null, displayWorkspace = null }) {
+export async function runAgent({ prompt, workspace, messages: previousMessages = [], maxTurns = null, maxTokens = null, model = DEFAULT_MODEL, provider, signal, onEvent = () => {}, permissions = [], permissionMode = 'default', contextWindow = null, budgetTokens = null, sessionDir = null, resumeSessionId = null, sessionId = null, hooks = {}, agentDepth = 0, onPermissionRequest = null, microCompactKeepRecent = Number(process.env.MYCC_MICRO_COMPACT_KEEP ?? 0), commandRunner = null, displayWorkspace = null, extraTools = [], agentTeamRunner = null, preserveIndex = false }) {
   // 显式 --context-window 优先,否则按模型解析(默认窗口不再是固定 200k 常量;
   // 源码 context.ts getContextWindowForModel 语义,P1-3)
   const effectiveContextWindow = contextWindow ?? getContextWindowForModel(model)
@@ -196,8 +197,15 @@ export async function runAgent({ prompt, workspace, messages: previousMessages =
   // system prompt 在会话开始时构建一次(含 git status 快照与 CLAUDE.md),缓存复用
   // 保证 prompt cache 稳定,避免每轮重复执行 git 命令
   let systemPrompt = ''
+  // 编排层注入的额外工具（如团队通信信道 postTeamMessage/getTeamMessages）
+  // Built-ins are authoritative.  In particular, a team must never replace
+  // the ordinary one-shot Agent tool with an accidentally same-named extra.
+  const builtinNames = new Set(TOOL_DEFINITIONS.map(tool => tool.name))
+  const safeExtraTools = extraTools.filter(tool => tool?.name && !builtinNames.has(tool.name))
+  const teamTools = new Map(safeExtraTools.map(t => [t.name, t]))
+  const allTools = [...TOOL_DEFINITIONS, ...safeExtraTools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }))]
   try {
-    systemPrompt = await buildSystemPrompt({ workspace, displayWorkspace, model, tools: TOOL_DEFINITIONS, maxTurns })
+    systemPrompt = await buildSystemPrompt({ workspace, displayWorkspace, model, tools: allTools, maxTurns })
   } catch (error) {
     systemPrompt = [
       'You are MyCC, a coding agent operating inside a user-provided repository.',
@@ -301,7 +309,7 @@ export async function runAgent({ prompt, workspace, messages: previousMessages =
       response = await callModel({
         system: systemPrompt,
         messages: stripMessageMetadata(messages),
-        tools: TOOL_DEFINITIONS,
+        tools: allTools,
         maxTokens: maxOutputTokens,
         signal,
         onEvent: streamEvent => {
@@ -416,7 +424,18 @@ export async function runAgent({ prompt, workspace, messages: previousMessages =
         }
         if (!isError) {
           try {
-            result = await executeTool(toolUse.name, effectiveInput, { workspace, permissions, permissionMode, agentRunner, askHandler: onPermissionRequest, signal, commandRunner, displayWorkspace })
+            const extra = teamTools.get(toolUse.name)
+            if (extra) {
+              const decision = canUseTool(toolUse.name, effectiveInput, permissions, { mode: permissionMode })
+              if (decision.behavior === 'deny') throw new Error(decision.message)
+              if (decision.behavior === 'ask') {
+                const allowed = onPermissionRequest ? await onPermissionRequest({ toolName: toolUse.name, input: effectiveInput, message: decision.message }) : false
+                if (!allowed) throw new Error(decision.message ?? `No permission to use ${toolUse.name}.`)
+              }
+              result = await extra.handler(effectiveInput ?? {}, { signal, workspace, permissions, permissionMode })
+            } else {
+              result = await executeTool(toolUse.name, effectiveInput, { workspace, permissions, permissionMode, agentRunner, agentTeamRunner, askHandler: onPermissionRequest, signal, commandRunner, displayWorkspace })
+            }
             if (hooks?.PostToolUse) {
               await executeHooks(hooks, 'PostToolUse', hookBase({
                 tool_name: toolUse.name, tool_input: effectiveInput, tool_use_id: toolUse.id, tool_response: result, hook_event_name: 'PostToolUse',
@@ -463,7 +482,7 @@ export async function runAgent({ prompt, workspace, messages: previousMessages =
   }
   let diff = ''
   try {
-    const result = await collectGitDiff(workspace)
+    const result = await collectGitDiff(workspace, { preserveIndex })
     diff = result.diff || ''
   } catch {
     // A plain directory without git is still a valid local smoke-test target.

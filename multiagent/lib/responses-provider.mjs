@@ -159,9 +159,25 @@ async function streamOnce({ endpoint, apiKey, body, signal, timeoutMs, onEvent }
     let finalResponse = null
     const partialCalls = []
     const partialById = new Map()
+    // idle watchdog：每次 read 竞速一个无数据计时（半开连接/网关卡死时 abort+cancel，
+    // 避免 reader.read() 永久挂起；与 runtime/stream.mjs 的 Anthropic 链路一致）
+    const idleTimeoutMs = Number(process.env.MYCC_RESPONSES_IDLE_TIMEOUT_MS ?? 120_000)
+    let idleTimer = null
+    const readChunk = () => {
+      let rejectIdle
+      const idle = new Promise((_, reject) => {
+        rejectIdle = reject
+        idleTimer = setTimeout(() => {
+          timeout.abort(new Error('Stream idle timeout - no chunks received'))
+          reader.cancel().catch(() => {})
+          reject(new Error('Stream idle timeout - no chunks received'))
+        }, idleTimeoutMs)
+      })
+      return Promise.race([reader.read(), idle]).finally(() => clearTimeout(idleTimer))
+    }
     try {
       while (true) {
-        const { done, value } = await reader.read()
+        const { done, value } = await readChunk()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
         const parsed = parseSSEFrames(buffer)
@@ -191,6 +207,7 @@ async function streamOnce({ endpoint, apiKey, body, signal, timeoutMs, onEvent }
       }
     } catch (error) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      if (error?.message?.includes('Stream idle timeout')) throw error
       if (timeout.signal.aborted) throw new Error('API timeout')
       throwPartial(error, partialCalls)
     } finally {
@@ -210,6 +227,7 @@ async function streamOnce({ endpoint, apiKey, body, signal, timeoutMs, onEvent }
 
 function isRetryable(error, signal) {
   if (error instanceof StreamPartialError || signal?.aborted) return false
+  if (error?.message?.includes('Stream idle timeout')) return true // 半开连接/网关停滞可重试
   if (error instanceof APIHttpError) return error.status === 408 || error.status === 409 || error.status === 429 || error.status >= 500
   return error instanceof TypeError || error?.name === 'AbortError' || error?.message === 'API timeout'
 }

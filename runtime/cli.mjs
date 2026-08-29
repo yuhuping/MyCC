@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { runAgent, createDemoProvider } from './agent.mjs'
 import { runTui } from './tui.mjs'
+import { TeamSession } from './team-session.mjs'
 import { parseRules } from './permissions.mjs'
 import { parseHooksSettings } from './hooks.mjs'
 import { newestSessionId, projectDir } from './session.mjs'
@@ -13,6 +14,7 @@ function usage() {
 Usage:
   mycc --prompt "Fix the bug" [--cwd PATH]
   mycc --tui [--demo] [--cwd PATH]
+  mycc --team --prompt "Coordinate a fix" [--max-teammates N]
   cat task.txt | mycc [--cwd PATH]
 
 Options:
@@ -21,6 +23,8 @@ Options:
   --cwd PATH             Workspace root (default: current directory)
   --model MODEL          Anthropic model name
   --max-turns N          Maximum model/tool iterations (non-interactive; default: unlimited)
+  --team                 Enable Agent Team orchestration (opt-in)
+  --max-teammates N      Maximum asynchronous teammates (default: 4, range: 1-8)
   --json                 Print one JSON result instead of human-readable events
   --tui                  Start an interactive terminal UI
   --demo                 Run a deterministic local smoke test without an API key
@@ -44,6 +48,8 @@ function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') options.help = true
     else if (arg === '--json') options.json = true
     else if (arg === '--tui') options.tui = true
+    else if (arg === '--team') options.team = true
+    else if (arg === '--max-teammates') options.maxTeammates = Number(argv[++index])
     else if (arg === '--demo') options.demo = true
     else if (arg === '--prompt') options.prompt = argv[++index]
     else if (arg === '--prompt-file') options.promptFile = argv[++index]
@@ -76,6 +82,7 @@ if (options.help) {
   process.exit(0)
 }
 if (options.maxTurns !== undefined && (!Number.isInteger(options.maxTurns) || options.maxTurns < 1)) throw new Error('--max-turns must be a positive integer')
+if (options.maxTeammates !== undefined && (!Number.isInteger(options.maxTeammates) || options.maxTeammates < 1 || options.maxTeammates > 8)) throw new Error('--max-teammates must be an integer from 1 to 8')
 if (options.permissionMode && !PERMISSION_MODES.includes(options.permissionMode)) throw new Error('--permission-mode must be one of: ' + PERMISSION_MODES.join(', '))
 if (options.contextWindow !== undefined && (!Number.isInteger(options.contextWindow) || options.contextWindow < 1)) throw new Error('--context-window must be a positive integer')
 if (options.budgetTokens !== undefined && (!Number.isInteger(options.budgetTokens) || options.budgetTokens < 1)) throw new Error('--budget-tokens must be a positive integer')
@@ -112,6 +119,8 @@ if (options.tui) {
     sessionId: options.sessionId,
     hooks,
     initialPrompt,
+    team: options.team,
+    maxTeammates: options.maxTeammates,
   })
   process.exit(0)
 }
@@ -124,7 +133,7 @@ const onEvent = options.json ? () => {} : event => {
   if (event.type === 'tool_result' && event.name === 'Bash' && event.result?.exit_code !== undefined) console.error(`[turn ${event.turn}] bash: exit ${event.result.exit_code}`)
   if (event.type === 'assistant_text') console.log(event.text)
 }
-const result = await runAgent({
+const common = {
   prompt,
   workspace,
   maxTurns: options.maxTurns,
@@ -139,5 +148,8 @@ const result = await runAgent({
   sessionId: options.sessionId,
   hooks,
   onEvent,
-})
+}
+const result = options.team
+  ? await new TeamSession({ ...common, maxTeammates: options.maxTeammates ?? 4 }).run(prompt)
+  : await runAgent(common)
 if (options.json) console.log(JSON.stringify({ ...result, messages: undefined }))

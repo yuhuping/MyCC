@@ -65,14 +65,33 @@ npm test
 每个 agent 都复用 `runtime/agent.mjs`，由编排层通过共享工作区和结构化交接消息串联：
 
 ```text
-AgentGraph → 建码 Agent → 审阅 Agent → 优化 Agent → solution / trace
+relay（默认，历史基准）:   AgentGraph → 建码 Agent → 审阅 Agent → 优化 Agent → solution / trace
+planned（显式 DAG）:       execution plan → ready-set 并发 → worktree 隔离
+                          → 确定性集成（唯一 main writer）→ 测试门禁 → lifecycle trace
 ```
 
-离线链路验证：
+实现遵循 `Audit.md`：默认行为与历史 relay 结果格式兼容；并行实验必须带独立
+plan/并发上限/结果文件（不覆盖旧记录）。离线链路验证（不花 API 费用）：
 
 ```bash
-node multiagent/smoke-test.mjs
+npm test     # node multiagent/smoke-test.mjs（37 项：plan validator / 并发重叠 /
+             # 依赖屏障 / worktree / artifact / git apply 冲突 / 429 重试 / 取消 …）
 ```
+
+### Agent Team（显式启用）
+
+Agent Team 只在传入 `--team` 时启用；lead 与队友复用 `runtime/agent.mjs`，队友在
+`.mycc/teams/<team>/` 下的 detached worktree 中运行。模型通过 `TeamCreate`、
+`Agent({team_name,name,prompt,run_in_background:true})`、任务/消息工具和
+`TeamApplyPatch` 协作：
+
+```bash
+node runtime/cli.mjs --team --prompt "并行完成这个修复" --max-teammates 4
+```
+
+队友的普通文本不会直接显示给用户，必须用 `SendMessage` 汇报；完成任务后需先
+`TaskUpdate(status=completed)`，由 lead 应用 patch 后才能解锁依赖任务。v1 不支持
+跨进程恢复、嵌套团队或同一团队的多进程并发写状态。
 
 运行 MultiAgentBench coding 任务（需要外部任务数据和 Responses API 配置）：
 
@@ -82,6 +101,12 @@ node multiagent/run-mab.mjs \
   --task-ids 1-5 \
   --max-turns 25 \
   --skip-existing
+
+# 并发只读审查（baseline 后 reviewer/tester 并行）
+node multiagent/run-mab.mjs --task-ids 1-5 --coordination parallel-review --max-parallel-agents 3
+
+# 真实 DAG：显式 --plan（禁止从文本/relationships 猜拓扑）
+node multiagent/run-mab.mjs --task-ids 1-5 --coordination dag --plan plans/coding-dag-v1.json
 ```
 
 更多参数和输出结构见 [`multiagent/README.md`](multiagent/README.md)。`multiagent/out/` 为本地运行产物，默认不会进入 Git。

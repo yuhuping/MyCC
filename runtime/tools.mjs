@@ -139,6 +139,9 @@ export const TOOL_DEFINITIONS = [
         cwd: { type: 'string', description: 'Optional sub-workspace relative to the current workspace.' },
         max_turns: { type: 'integer', minimum: 1, maximum: 50 },
         model: { type: 'string' },
+        run_in_background: { type: 'boolean', description: 'When a team is active, start this task asynchronously and return its id.' },
+        team_name: { type: 'string', description: 'Team name for asynchronous Agent spawn.' },
+        name: { type: 'string', description: 'Name of the asynchronous teammate.' },
       },
       required: ['prompt'],
       additionalProperties: false,
@@ -673,24 +676,26 @@ export function runCommand(workspace, command, timeoutMs = 120_000, maxChars = D
  * 供 harness 层(agent 结束)与测试使用,不再作为模型工具暴露。
  * (git.ts:613-788 / gitDiff.ts:504-532 语义)
  */
-export async function collectGitDiff(workspace) {
+export async function collectGitDiff(workspace, { preserveIndex = false } = {}) {
   // Let Git render every file type itself. `git add -N` makes untracked files
   // visible to diff without putting content in the index, and avoids malformed
   // hand-written empty-file hunks such as `@@ -0,0 +1,0 @@`.
-  const untracked = await runCommand(workspace, 'git ls-files --others --exclude-standard -z', 30_000, 0)
-  if (untracked.exit_code !== 0) return { diff: '', error: untracked.stderr || 'git diff unavailable' }
-  const files = untracked.stdout.split('\0').filter(Boolean)
-  if (files.length) {
-    const quote = value => `'${value.replaceAll("'", "'\"'\"'")}'`
-    const staged = await runCommand(workspace, `git add --intent-to-add -- ${files.map(quote).join(' ')}`, 30_000, 0)
-    if (staged.exit_code !== 0) return { diff: '', error: staged.stderr || 'git add intent-to-add failed' }
+  if (!preserveIndex) {
+    const untracked = await runCommand(workspace, 'git ls-files --others --exclude-standard -z', 30_000, 0)
+    if (untracked.exit_code !== 0) return { diff: '', error: untracked.stderr || 'git diff unavailable' }
+    const files = untracked.stdout.split('\0').filter(Boolean)
+    if (files.length) {
+      const quote = value => `'${value.replaceAll("'", "'\"'\"'")}'`
+      const staged = await runCommand(workspace, `git add --intent-to-add -- ${files.map(quote).join(' ')}`, 30_000, 0)
+      if (staged.exit_code !== 0) return { diff: '', error: staged.stderr || 'git add intent-to-add failed' }
+    }
   }
   // patch extraction must not truncate stdout (50k truncation loses tail hunks).
   const result = await runCommand(workspace, 'git diff --no-ext-diff --binary', 30_000, 0)
   return result.exit_code === 0 ? { diff: result.stdout } : { diff: '', error: result.stderr || 'git diff unavailable' }
 }
 
-export async function executeTool(name, input, { workspace, permissions = [], permissionMode = 'default', agentRunner, askHandler, signal, commandRunner, displayWorkspace } = {}) {
+export async function executeTool(name, input, { workspace, permissions = [], permissionMode = 'default', agentRunner, agentTeamRunner = null, askHandler, signal, commandRunner, displayWorkspace } = {}) {
   const definition = TOOL_DEFINITIONS.find(tool => tool.name === name)
   if (!definition) throw new Error(`Unknown tool: ${name}`)
   const cleanInput = { ...(input ?? {}) }
@@ -731,6 +736,18 @@ export async function executeTool(name, input, { workspace, permissions = [], pe
     }
     case 'Agent': {
       if (!agentRunner) throw new Error('Agent tool is unavailable in this context')
+      if (agentTeamRunner && (cleanInput.team_name || cleanInput.name || cleanInput.run_in_background)) {
+        if (cleanInput.run_in_background !== true) throw new Error('Team Agent requires run_in_background=true')
+        return await agentTeamRunner({
+          prompt: cleanInput.prompt,
+          cwd: cleanInput.cwd,
+          name: cleanInput.name,
+          team_name: cleanInput.team_name,
+          model: cleanInput.model,
+          maxTurns: cleanInput.max_turns,
+          signal,
+        })
+      }
       const subWorkspace = cleanInput.cwd ? resolveWorkspacePath(workspace, cleanInput.cwd) : workspace
       const sub = await agentRunner({
         prompt: cleanInput.prompt,

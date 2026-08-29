@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node ./runtime/cli.mjs",
-    "test": "node multiagent/smoke-test.mjs",
+    "test": "node multiagent/smoke-test.mjs && node runtime/team-smoke.mjs",
     "smoke:mab": "node multiagent/smoke-test.mjs"
   },
   "engines": {

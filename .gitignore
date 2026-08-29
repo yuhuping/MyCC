@@ -11,6 +11,7 @@
 
 # 本地运行产物与敏感配置
 /multiagent/out/
+/multiagent/eval/
 /.env
 /.env.*
 !/.env.example

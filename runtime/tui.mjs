@@ -1,5 +1,6 @@
 import readline from 'node:readline/promises'
 import { createDemoProvider, runAgent } from './agent.mjs'
+import { TeamSession } from './team-session.mjs'
 import { listSessions, resumeMessages } from './session.mjs'
 
 function writeLine(output, text = '') {
@@ -12,7 +13,7 @@ function summarize(value) {
 }
 
 export class TuiSession {
-  constructor({ workspace, maxTurns, model, demo = false, output = process.stdout, input = process.stdin, run = runAgent, providerFactory, sessionDir = null, permissions = [], permissionMode = 'default', hooks = {}, resumeSessionId = null, sessionId = null, contextWindow = undefined, budgetTokens = null } = {}) {
+  constructor({ workspace, maxTurns, model, team = false, maxTeammates = 4, demo = false, output = process.stdout, input = process.stdin, run = runAgent, providerFactory, sessionDir = null, permissions = [], permissionMode = 'default', hooks = {}, resumeSessionId = null, sessionId = null, contextWindow = undefined, budgetTokens = null } = {}) {
     this.options = { workspace, maxTurns, model }
     // 透传给 runAgent 的策略参数(权限/hook/持久化等),submit 时一并转发
     this.passThrough = { permissions, permissionMode, hooks, sessionDir, resumeSessionId, sessionId, contextWindow, budgetTokens }
@@ -22,6 +23,9 @@ export class TuiSession {
     this.sessionDir = sessionDir
     this.run = run
     this.providerFactory = providerFactory || (demo ? () => createDemoProvider() : () => undefined)
+    this.team = team
+    this.maxTeammates = maxTeammates
+    this.teamSession = null
     this.messages = []
   }
 
@@ -96,25 +100,45 @@ export class TuiSession {
     }
 
     let streamedDelta = false
-    const result = await this.run({
+    const renderAgentEvent = event => {
+      if (event.type === 'model_request') writeLine(this.output, `[turn ${event.turn}] model request`)
+      if (event.type === 'tool_call') writeLine(this.output, `[turn ${event.turn}] tool: ${event.name}`)
+      if (event.type === 'tool_result') writeLine(this.output, `[turn ${event.turn}] result: ${event.name} ${summarize(event.result)}`)
+      if (event.type === 'assistant_text_delta') {
+        streamedDelta = true
+        this.output.write(event.text)
+      }
+      if (event.type === 'assistant_text' && !streamedDelta) writeLine(this.output, `\n${event.text}\n`)
+      if (event.type === 'max_turns') writeLine(this.output, `Stopped after ${event.turns} turns.`)
+    }
+    const runOptions = {
       ...this.options,
       ...this.passThrough,
       prompt,
       messages: this.messages,
-      provider: this.providerFactory(),
       onPermissionRequest: this.askPermission.bind(this),
-      onEvent: event => {
-        if (event.type === 'model_request') writeLine(this.output, `[turn ${event.turn}] model request`)
-        if (event.type === 'tool_call') writeLine(this.output, `[turn ${event.turn}] tool: ${event.name}`)
-        if (event.type === 'tool_result') writeLine(this.output, `[turn ${event.turn}] result: ${event.name} ${summarize(event.result)}`)
-        if (event.type === 'assistant_text_delta') {
-          streamedDelta = true
-          this.output.write(event.text)
-        }
-        if (event.type === 'assistant_text' && !streamedDelta) writeLine(this.output, `\n${event.text}\n`)
-        if (event.type === 'max_turns') writeLine(this.output, `Stopped after ${event.turns} turns.`)
-      },
-    })
+      onEvent: renderAgentEvent,
+    }
+    let result
+    if (this.team) {
+      if (!this.teamSession || this.teamSession.store.state?.stopped) {
+        this.teamSession = new TeamSession({
+          ...this.options,
+          ...this.passThrough,
+          maxTeammates: this.maxTeammates,
+          provider: this.providerFactory(),
+          onPermissionRequest: this.askPermission.bind(this),
+          onEvent: event => {
+            if (event.type === 'team_message' || event.type === 'team_created' || event.type === 'teammate_idle' || event.type === 'teammate_stopped') writeLine(this.output, `[team] ${event.type}`)
+            if (event.teammate === 'lead') renderAgentEvent(event)
+          },
+        })
+        this.teamSession.leadHistory = this.messages
+      }
+      result = await this.teamSession.run(prompt)
+    } else {
+      result = await this.run({ ...runOptions, provider: this.providerFactory() })
+    }
     this.messages = result.messages
     return { result }
   }
