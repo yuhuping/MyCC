@@ -130,7 +130,7 @@ export class TeamSession extends EventEmitter {
       const prompt = `You are a MyCC Agent Team teammate. Your plain text is private to the team and is not shown to the user; communicate findings with SendMessage. Never create/delete/spawn a nested team. Complete assigned work and call TaskUpdate(status=completed) only after the worktree patch is ready.\n\n${next.type === 'task'
         ? `[Team task ${next.task.id}] ${next.task.subject}\n${next.task.description}\nYou own this task.`
         : next.content}`
-      this.onEvent({ type: 'teammate_turn_start', name, kind: next.type })
+      this.onEvent({ type: 'teammate_turn_start', name, kind: next.type, task: next.task ?? null })
       try {
         const result = await runAgent({
           prompt, workspace: member.workspace, messages, model: member.model ?? this.model,
