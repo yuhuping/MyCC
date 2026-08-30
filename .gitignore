@@ -4,6 +4,9 @@
 !/README.md
 !/package.json
 !/.env.example
+!/docs/
+!/docs/assets/
+!/docs/assets/mycc-offline-demo.gif
 !/runtime/
 !/runtime/**
 !/multiagent/

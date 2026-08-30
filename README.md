@@ -1,99 +1,110 @@
-# MyCC
-
-> 一个轻量、可运行的 Claude Code 风格 coding agent，以及基于它构建的多智能体协作 harness。
+<div align="center">
+  <h1>MyCC</h1>
+  <p><strong>一个可运行的 coding agent runtime，以及面向真实协作约束的多智能体 harness。</strong></p>
+  <p>
+    <a href="#-快速开始">快速开始</a> ·
+    <a href="#-它解决什么问题">能力概览</a> ·
+    <a href="#-多智能体协作">多智能体协作</a>
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 20+" />
+    <img src="https://img.shields.io/badge/ESM-Native-F7DF1E?style=flat-square&logo=javascript&logoColor=1f2937" alt="Native ESM" />
+    <img src="https://img.shields.io/badge/Agent-Tool%20Loop-8B5CF6?style=flat-square" alt="Agent tool loop" />
+    <img src="https://img.shields.io/badge/Teams-Worktree%20Isolated-2563EB?style=flat-square" alt="Worktree isolated teams" />
+  </p>
+</div>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white" alt="Node.js 20+" />
-  <img src="https://img.shields.io/badge/ESM-native-111827?logo=javascript&logoColor=F7DF1E" alt="Native ESM" />
-  <img src="https://img.shields.io/badge/Anthropic-API-191919?logo=anthropic&logoColor=white" alt="Anthropic API" />
-  <img src="https://img.shields.io/badge/MultiAgentBench-compatible-7C3AED" alt="MultiAgentBench compatible" />
+  <img src="docs/assets/mycc-offline-demo.gif" alt="MyCC AgentTeam 并行协作、隔离 worktree、patch 集成与测试门禁演示" width="100%" />
 </p>
 
-## ✨ 项目结构
+<p align="center"><sub>真实 <code>TeamSession</code> 事件驱动：Lead 创建团队，两个 teammate 在隔离 worktree 并行交付 patch，经审查合入后通过测试门禁；<code>npm run demo:team</code> 可离线复现，不需要 API Key。</sub></p>
 
-MyCC 的可上传、可运行部分保持在两个目录中：
+---
 
-| 目录 | 作用 |
-| --- | --- |
-| `runtime/` | Agent loop、SSE 流式请求、工具系统、权限、上下文压缩、会话恢复和终端 TUI |
-| `multiagent/` | 多智能体接力编排、共享工作区、Responses API provider 和 MultiAgentBench 入口 |
+## ✨ 它解决什么问题
 
-仓库刻意不包含本地评测数据、评测产物、日志和研究快照；多智能体正式运行时按需从外部提供任务数据。
+MyCC 把一个 coding agent 必须具备的基础运行时能力，与可审计的团队协作机制放在同一仓库中：既可以在终端中完成单 agent 的「模型 → 工具 → 结果回流」循环，也可以把多个 agent 放进隔离 worktree，按依赖关系并发执行、合并并验证。
 
-## 🚀 快速启动 MyCC
+| 层次 | 关注点 | 入口 |
+| --- | --- | --- |
+| `runtime/` | Agent loop、流式响应、工具系统、权限、上下文压缩、会话恢复与 TUI | [`runtime/cli.mjs`](runtime/cli.mjs) |
+| `multiagent/` | 串行/显式 DAG 编排、共享状态、隔离 worktree、trace 与 MultiAgentBench 入口 | [`multiagent/README.md`](multiagent/README.md) |
 
-环境要求：Node.js `20+`。
+仓库不提交本地评测数据、日志或运行产物。需要任务数据的评测由使用者在本地提供，运行产物默认位于忽略的目录中。
+
+```mermaid
+flowchart LR
+  U[Prompt / TUI] --> R[Agent runtime]
+  R --> M[Model provider]
+  M --> R
+  R --> T[Read · Edit · Bash · Agent]
+  T --> R
+  R --> O[Response / session]
+  R --> H[Team harness]
+  H --> W[Isolated worktrees]
+  H --> V[Integration & verification]
+```
+
+## 🚀 快速开始
+
+**环境要求：** Node.js `20+`。项目没有运行时 npm 依赖，clone 后建议先跑 AgentTeam 离线 demo：
 
 ```bash
 git clone https://github.com/yuhuping/MyCC.git
 cd MyCC
-cp .env.example .env
-```
 
-编辑 `.env`，至少填写 `ANTHROPIC_API_KEY`，然后启动交互式终端：
+# 两个 teammate 并行工作、交付 patch，并由 lead 集成验证
+npm run demo:team
 
-```bash
-npm start -- --tui
-```
-
-不调用 API 的本地演示：
-
-```bash
-npm start -- --tui --demo
+# 单 Agent：验证模型 → 工具 → 结果回流
 npm start -- --demo --prompt "Inspect this workspace"
 ```
 
-也可以直接运行离线冒烟测试：
+运行交互式终端：
 
 ```bash
-npm test
+cp .env.example .env
+# 在 .env 中填写 ANTHROPIC_API_KEY
+npm start -- --tui
+```
+
+也可以用离线 TUI 体验命令和工具回路：
+
+```bash
+npm start -- --tui --demo
 ```
 
 ## 🧠 Runtime 能力
 
-- **Agent loop**：多轮模型响应、工具调用和结果回流
-- **工具系统**：`Read`、`Write`、`Edit`、`Glob`、`Grep`、`Bash`、`Agent`
-- **可靠性**：超时、瞬时错误重试、部分流恢复、输出 token 扩容
-- **上下文管理**：token budget、自动 compact、历史会话持久化与恢复
-- **安全边界**：权限规则、headless 模式拒绝未授权工具、hook 生命周期
-- **终端体验**：交互式 TUI、`/help`、`/clear`、`/sessions`、`/exit`
+- **完整工具回路**：多轮模型响应、工具调用、工具结果回流与最终回答。
+- **可控的执行边界**：支持 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`Bash` 与子 `Agent`，并由权限规则与 headless 拒绝策略约束执行。
+- **面向长任务的恢复能力**：超时与瞬时错误重试、部分流恢复、输出 token 扩容、会话持久化与恢复。
+- **上下文管理**：token budget、自动 compact 与历史消息压缩，避免长对话无界增长。
+- **终端优先体验**：TUI 支持 `/help`、`/clear`、`/sessions`、`/exit`。
 
-核心入口：`runtime/cli.mjs` → `runtime/agent.mjs` → `runtime/tools.mjs`。
+核心调用链：`runtime/cli.mjs` → `runtime/agent.mjs` → `runtime/tools.mjs`。
 
-## 🤝 Multi-Agent Harness
+## 🤝 多智能体协作
 
-每个 agent 都复用 `runtime/agent.mjs`，由编排层通过共享工作区和结构化交接消息串联：
+MyCC 的 runtime 内置 AgentTeam 协作链路：`TeamCreate` / `Agent` / `TaskCreate` / `SendMessage` / `TaskUpdate` / `TeamApplyPatch` / `TeamDelete`。每个 teammate 使用独立 Git worktree，交付物以 patch 进入 lead 的集成与测试门禁；离线演示还会验证两个任务在首个交付完成前均已开始，避免把串行执行误称为并行。
+
+仓库同时保留历史的 relay 协作模式，并提供显式 DAG 模式。后者不从自然语言或 agent 关系“猜”任务依赖：计划、并发上限、结果文件和合并职责必须显式给出。
 
 ```text
-relay（默认，历史基准）:   AgentGraph → 建码 Agent → 审阅 Agent → 优化 Agent → solution / trace
-planned（显式 DAG）:       execution plan → ready-set 并发 → worktree 隔离
-                          → 确定性集成（唯一 main writer）→ 测试门禁 → lifecycle trace
+relay（默认）     AgentGraph → 建码 → 审阅 → 优化 → solution / trace
+
+planned（显式 DAG）execution plan → ready set 并发 → isolated worktrees
+                                  → 唯一 main writer 合并 → 测试门禁 → lifecycle trace
 ```
 
-实现遵循 `Audit.md`：默认行为与历史 relay 结果格式兼容；并行实验必须带独立
-plan/并发上限/结果文件（不覆盖旧记录）。离线链路验证（不花 API 费用）：
-
-```bash
-npm test     # node multiagent/smoke-test.mjs（37 项：plan validator / 并发重叠 /
-             # 依赖屏障 / worktree / artifact / git apply 冲突 / 429 重试 / 取消 …）
-```
-
-### Agent Team（显式启用）
-
-Agent Team 只在传入 `--team` 时启用；lead 与队友复用 `runtime/agent.mjs`，队友在
-`.mycc/teams/<team>/` 下的 detached worktree 中运行。模型通过 `TeamCreate`、
-`Agent({team_name,name,prompt,run_in_background:true})`、任务/消息工具和
-`TeamApplyPatch` 协作：
+启用 Agent Team 后，lead 与队友复用同一 runtime；队友在 `.mycc/teams/<team>/` 的 detached worktree 工作。普通文本不会直接作为用户回答，必须经由团队消息和任务状态向 lead 汇报，再由 lead 应用 patch：
 
 ```bash
 node runtime/cli.mjs --team --prompt "并行完成这个修复" --max-teammates 4
 ```
 
-队友的普通文本不会直接显示给用户，必须用 `SendMessage` 汇报；完成任务后需先
-`TaskUpdate(status=completed)`，由 lead 应用 patch 后才能解锁依赖任务。v1 不支持
-跨进程恢复、嵌套团队或同一团队的多进程并发写状态。
-
-运行 MultiAgentBench coding 任务（需要外部任务数据和 Responses API 配置）：
+运行需要外部任务数据与 Responses API 配置的 MultiAgentBench coding 任务：
 
 ```bash
 node multiagent/run-mab.mjs \
@@ -101,32 +112,29 @@ node multiagent/run-mab.mjs \
   --task-ids 1-5 \
   --max-turns 25 \
   --skip-existing
-
-# 并发只读审查（baseline 后 reviewer/tester 并行）
-node multiagent/run-mab.mjs --task-ids 1-5 --coordination parallel-review --max-parallel-agents 3
-
-# 真实 DAG：显式 --plan（禁止从文本/relationships 猜拓扑）
-node multiagent/run-mab.mjs --task-ids 1-5 --coordination dag --plan plans/coding-dag-v1.json
 ```
 
-更多参数和输出结构见 [`multiagent/README.md`](multiagent/README.md)。`multiagent/out/` 为本地运行产物，默认不会进入 Git。
+更多协作参数、结果结构和不同协调模式见 [`multiagent/README.md`](multiagent/README.md)。
 
-## ⚙️ 配置示例
+## ✅ 验证
 
-`.env` 支持以下常用配置：
+```bash
+npm test
+```
+
+该命令运行 multi-agent 与 team 的离线 smoke test；它不需要模型密钥，也不产生可提交的评测结论。
+
+## ⚙️ 配置
+
+最小模型配置：
 
 ```dotenv
 ANTHROPIC_API_KEY=your-api-key
 MYCC_MODEL=claude-sonnet-4-6
 MYCC_API_BASE_URL=https://api.anthropic.com
-
-# Multi-Agent Responses API（可选）
-MYCC_RESPONSES_API_KEY=your-responses-api-key
-MYCC_RESPONSES_BASE_URL=https://opencode.ai/zen/go
-MYCC_RESPONSES_MODEL=deepseek-v4-flash
 ```
 
-不要把真实密钥提交到 Git；`.env` 已加入忽略规则。
+Multi-Agent Responses API 为可选配置，详见 [`.env.example`](.env.example)。不要提交真实密钥；`.env` 已被 Git 忽略。
 
 ## 📄 License
 

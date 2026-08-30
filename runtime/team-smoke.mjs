@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { TeamSession } from './team-session.mjs'
 import { runAgent } from './agent.mjs'
 import { TuiSession } from './tui.mjs'
+import { runTeamDemo } from './team-demo.mjs'
 
 const run = promisify(execFile)
 const git = (cwd, ...args) => run('git', args, { cwd })
@@ -108,6 +109,18 @@ try {
   assert.equal(session.store.state.stopped, true)
   const finalStatus = (await git(workspace, 'status', '--porcelain')).stdout.trim().split('\n').sort().join('\n')
   assert.deepEqual(finalStatus.split('\n'), [...before.trim().split('\n'), '?? binary.dat'].sort(), 'lead status remains recoverable after apply')
+
+  const demo = await runTeamDemo({ output: null, delayMs: 0 })
+  assert.match(demo.capabilitySource, /orchestration: 'AgentTeam'/)
+  assert.match(demo.testSource, /publishes the AgentTeam contract/)
+  assert.equal(demo.result.team.stopped, true, 'offline AgentTeam demo closes the team')
+  assert.deepEqual(demo.result.team.tasks.map(task => task.patchStatus), ['applied', 'applied'])
+  const taskStarts = demo.events
+    .map((event, index) => ({ event, index }))
+    .filter(({ event }) => event.type === 'teammate_turn_start' && event.kind === 'task')
+  const firstCompletion = demo.events.findIndex(event => event.type === 'tool_result' && event.name === 'TaskUpdate' && event.result?.status === 'completed')
+  assert.deepEqual(taskStarts.map(({ event }) => event.name).sort(), ['architect', 'verifier'])
+  assert.ok(taskStarts.every(({ index }) => index < firstCompletion), 'both teammates start their tasks before either delivery completes')
   console.log('team smoke: PASS')
 } finally {
   await rm(workspace, { recursive: true, force: true })
