@@ -24,3 +24,6 @@ __pycache__/
 *.py[cod]
 *.db
 *.db-*
+
+# SWE-bench
+SWE-bench/*
