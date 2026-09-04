@@ -5,8 +5,8 @@
 !/package.json
 !/.env.example
 !/docs/
-!/docs/assets/
-!/docs/assets/mycc-offline-demo.gif
+!/assets/
+!/assets/mycc-offline-demo.gif
 !/runtime/
 !/runtime/**
 !/multiagent/
@@ -27,3 +27,6 @@ __pycache__/
 *.py[cod]
 *.db
 *.db-*
+
+# SWE-bench
+SWE-bench/*
